@@ -167,6 +167,7 @@ function layer:sample_beam(imgs, opt)
   local beam_size = utils.getopt(opt, 'beam_size', 10)
   local batch_size, feat_dim = imgs:size(1), imgs:size(2)
   local function compare(a,b) return a.p > b.p end -- used downstream
+  local function compare_avg(a,b) return torch.mean(a.probs:exp()) > torch.mean(b.probs:exp())
 
   assert(beam_size <= self.vocab_size+1, 'lets assume this for now, otherwise this corner case causes a few headaches down the road. can be dealt with in future if needed')
 
@@ -215,10 +216,13 @@ function layer:sample_beam(imgs, opt)
             -- compute logprob of expanding beam q with word in (sorted) position c
             local local_logprob = ys[{ q,c }]
             local candidate_logprob = beam_logprobs_sum[q] + local_logprob
-            table.insert(candidates, {c=ix[{ q,c }], q=q, p=candidate_logprob, r=local_logprob })
+
+            local beam = beam_seq_logprobs[{ t-2, q }]:clone()
+            beam[{t-2, 1}] = local_logprob
+            table.insert(candidates, {c=ix[{ q,c }], q=q, p=candidate_logprob, r=local_logprob, props=beam })
           end
         end
-        table.sort(candidates, compare) -- find the best c,q pairs
+        table.sort(candidates, compare_avg) -- find the best c,q pairs
 
         -- construct new beams
         new_state = net_utils.clone_list(state)
@@ -269,7 +273,7 @@ function layer:sample_beam(imgs, opt)
       for i=1,self.num_state do table.insert(state, out[i]) end
     end
 
-    table.sort(done_beams, compare)
+    table.sort(done_beams, compare_avg)
     seq[{ {}, k }] = done_beams[1].seq -- the first beam has highest cumulative score
     seqLogprobs[{ {}, k }] = done_beams[1].logps
   end
